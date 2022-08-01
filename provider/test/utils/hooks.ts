@@ -6,6 +6,7 @@ import * as path from 'path';
 import * as httpServer from 'http-server';
 import {
   GenericContainer,
+  Network,
   StartedTestContainer,
   TestContainers,
 } from 'testcontainers';
@@ -16,12 +17,14 @@ declare module 'mocha' {
     driver: WebDriver;
     extensionUrl: string;
     testAppUrl: string;
+    nodeUrl: string;
     wait: number;
   }
 }
 
 interface GlobalFixturesContext {
   selenium: StartedTestContainer;
+  node: StartedTestContainer;
   testApp: httpServer.HttpServer;
 }
 
@@ -51,6 +54,14 @@ export async function mochaGlobalSetup(this: GlobalFixturesContext) {
     );
   }
 
+  const host = await new Network().start();
+
+  this.node = await new GenericContainer('wavesplatform/waves-private-node')
+    .withExposedPorts(6869)
+    .withNetworkMode(host.getName())
+    .withNetworkAliases('waves-private-node')
+    .start();
+
   this.testApp = httpServer.createServer({ root: testAppDir });
   this.testApp.listen(8081, '0.0.0.0', function () {});
 
@@ -60,6 +71,7 @@ export async function mochaGlobalSetup(this: GlobalFixturesContext) {
   this.selenium = await new GenericContainer('selenium/standalone-chrome')
     .withBindMount(path.resolve(wavesKeeperDir), '/app/waves_keeper', 'ro')
     .withExposedPorts(...seleniumPorts)
+    .withNetworkMode(host.getName())
     .start();
 
   await Promise.all(
@@ -90,6 +102,7 @@ export async function mochaGlobalSetup(this: GlobalFixturesContext) {
 
 export async function mochaGlobalTeardown(this: GlobalFixturesContext) {
   await this.selenium.stop();
+  await this.node.stop();
   this.testApp.close();
 }
 
@@ -104,7 +117,8 @@ export const mochaHooks = () => ({
       .setChromeOptions(
         new chrome.Options().addArguments(
           `--load-extension=/app/waves_keeper`,
-          '--disable-dev-shm-usage'
+          '--disable-dev-shm-usage',
+          '--disable-web-security'
         )
       )
       .build();
@@ -124,6 +138,7 @@ export const mochaHooks = () => ({
     }
 
     this.testAppUrl = 'http://host.testcontainers.internal:8081';
+    this.nodeUrl = 'http://waves-private-node:6869';
   },
 
   afterAll(this: mocha.Context, done: mocha.Done) {
